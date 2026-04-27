@@ -27,6 +27,8 @@ class GenerationService
         }
         $totalChunks = (int)ceil($count / $chunkSize);
 
+        // System prompt is in Russian as required by spec; all targeted LLM providers
+        // (OpenRouter, Gemini) handle multilingual instructions correctly.
         $systemPrompt = 'Ты генератор JSON. Всегда возвращай только валидный JSON без markdown, без пояснений, без ```.';
         $allItems     = [];
 

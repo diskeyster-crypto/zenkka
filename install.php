@@ -49,7 +49,14 @@ if (file_exists(STORAGE_PATH . '/config.json')) {
 // ── PHP version check ───────────────────────────────────────────────────────
 if (PHP_VERSION_ID < 80100) {
     $v = htmlspecialchars(PHP_VERSION, ENT_QUOTES, 'UTF-8');
-    echo "PHP 8.1+ required. Current: {$v}";
+    echo <<<HTML
+    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Unsupported PHP</title>
+    <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#f0f2f5;}
+    .card{background:#fff;padding:2rem 3rem;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.15);text-align:center;}
+    h2{color:#e74c3c;}</style></head><body>
+    <div class="card"><h2>⚠️ Unsupported PHP Version</h2>
+    <p>PHP 8.1+ is required. Current version: <strong>{$v}</strong></p></div></body></html>
+    HTML;
     exit;
 }
 
