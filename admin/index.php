@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $submitted = true;
         try {
             $topic       = Validator::str($_POST['topic'] ?? '', 1, 500);
-            $count       = Validator::int($_POST['count'] ?? 10, 1, (int)($config['max_variants_per_request'] ?? 1000));
+            $count       = Validator::int($_POST['count'] ?? 10, 1, (int)($config['max_variants_per_request'] ?? 200));
             $language    = Validator::inList($_POST['language'] ?? 'ru', ['ru', 'en', 'de', 'fr', 'es', 'zh']);
             $format      = Validator::inList($_POST['format'] ?? 'title', ['title', 'short', 'extended']);
             $temperature = Validator::float($_POST['temperature'] ?? 0.7, 0.0, 2.0);

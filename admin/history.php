@@ -24,8 +24,12 @@ if (is_dir($generationsDir)) {
     }
 }
 
-// Sort newest first (by mtime)
-usort($files, fn($a, $b) => filemtime($b) <=> filemtime($a));
+// Sort newest first (by mtime), handling filemtime() returning false
+usort($files, function ($a, $b) {
+    $mtimeA = @filemtime($a);
+    $mtimeB = @filemtime($b);
+    return ($mtimeB !== false ? $mtimeB : 0) <=> ($mtimeA !== false ? $mtimeA : 0);
+});
 
 // Load metadata for each
 $generations = [];

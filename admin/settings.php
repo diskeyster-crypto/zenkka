@@ -58,10 +58,11 @@ $config = JsonStore::readConfig();
 // Mask API keys — show last 4 chars only
 function maskKey(string $key): string
 {
-    if (strlen($key) <= 4) {
-        return str_repeat('*', strlen($key));
+    $len = mb_strlen($key);
+    if ($len <= 4) {
+        return str_repeat('*', $len);
     }
-    return str_repeat('*', strlen($key) - 4) . substr($key, -4);
+    return str_repeat('*', $len - 4) . mb_substr($key, -4);
 }
 
 $maskedOrKey     = maskKey($config['openrouter_api_key'] ?? '');

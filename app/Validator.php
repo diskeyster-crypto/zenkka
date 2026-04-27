@@ -12,7 +12,7 @@ class Validator
                 "Value length {$len} is out of range [{$min}, {$max}]."
             );
         }
-        return htmlspecialchars($val, ENT_QUOTES, 'UTF-8');
+        return $val;
     }
 
     public static function int(mixed $val, int $min, int $max): int
