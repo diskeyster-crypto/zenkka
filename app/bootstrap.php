@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 define('BASE_PATH', dirname(__DIR__));
 define('STORAGE_PATH', BASE_PATH . '/storage');
+define('EXPORTS_PATH', STORAGE_PATH . '/exports');
 define('APP_PATH', BASE_PATH . '/app');
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -25,6 +26,9 @@ require_once APP_PATH . '/Validator.php';
 require_once APP_PATH . '/Logger.php';
 require_once APP_PATH . '/PromptBuilder.php';
 require_once APP_PATH . '/GenerationValidator.php';
+require_once APP_PATH . '/PathGuard.php';
+require_once APP_PATH . '/FileNameBuilder.php';
+require_once APP_PATH . '/ExportService.php';
 require_once APP_PATH . '/GenerationService.php';
 require_once APP_PATH . '/Ai/AiClientInterface.php';
 require_once APP_PATH . '/Ai/OpenRouterClient.php';

@@ -7,29 +7,39 @@ class GenerationService
     private array                $config;
     private PromptBuilder        $promptBuilder;
     private GenerationValidator  $validator;
+    private ExportService        $exportService;
+    private FileNameBuilder      $fileNameBuilder;
 
     public function __construct(AiClientInterface $client, array $config)
     {
-        $this->client        = $client;
-        $this->config        = $config;
-        $this->promptBuilder = new PromptBuilder();
-        $this->validator     = new GenerationValidator();
+        $this->client          = $client;
+        $this->config          = $config;
+        $this->promptBuilder   = new PromptBuilder();
+        $this->validator       = new GenerationValidator();
+        $this->exportService   = new ExportService();
+        $this->fileNameBuilder = new FileNameBuilder();
     }
 
     /**
-     * Generate content items.
+     * Generate content items, then export them to files.
      *
      * $params keys:
-     *   topic, count, language, temperature,
+     *   topic, count, language, language_name, temperature,
      *   length_settings  (array with title/short_description/description sub-arrays),
      *   operator_rules   (string),
-     *   prompt_template  (string, optional)
+     *   prompt_template  (string, optional),
+     *   generation_name  (string),
+     *   destination_folder (string),
+     *   output_format    (json|txt|html|md|csv),
+     *   output_mode      (single_file|file_per_item|both),
+     *   filename_template (string)
      */
     public function generate(array $params): array
     {
         $topic          = $params['topic'];
         $count          = (int)$params['count'];
         $language       = $params['language'];
+        $languageName   = $params['language_name'] ?? $language;
         $temperature    = (float)($params['temperature'] ?? 0.7);
         $lengthSettings = $params['length_settings'] ?? [];
         $operatorRules  = $params['operator_rules']  ?? '';
@@ -37,17 +47,36 @@ class GenerationService
             ?? $this->config['default_prompt_template']
             ?? PromptBuilder::DEFAULT_TEMPLATE;
 
+        // Export / file settings
+        $generationName   = trim($params['generation_name'] ?? '');
+        $destinationFolder = trim($params['destination_folder'] ?? '');
+        $outputFormat     = $params['output_format']      ?? 'json';
+        $outputMode       = $params['output_mode']        ?? 'single_file';
+        $filenameTemplate = $params['filename_template']  ?? '{generation_slug}_{num}';
+        $transliterate    = (bool)($this->config['transliterate_filenames'] ?? false);
+
+        // Generate slug from name
+        if ($generationName === '') {
+            $generationName = 'generation_' . date('Ymd_His');
+        }
+        $generationSlug = $this->fileNameBuilder->slugify($generationName, true);
+
         // Inject global tolerance settings into lengthSettings
         $lengthSettings['allow_length_tolerance'] = (bool)($this->config['allow_length_tolerance'] ?? false);
         $lengthSettings['tolerance_percent']       = (int)($this->config['tolerance_percent'] ?? 10);
 
         // Auto-append medical safety rules if topic is health-related
-        $medicalRules  = $this->promptBuilder->buildMedicalSafetyRules($topic);
+        $medicalRules = $this->promptBuilder->buildMedicalSafetyRules($topic);
         if ($medicalRules !== '' && mb_strpos($operatorRules, '[АВТОМАТИЧЕСКИЕ ПРАВИЛА БЕЗОПАСНОСТИ') === false) {
             $operatorRules = $operatorRules !== ''
                 ? $operatorRules . "\n\n" . $medicalRules
                 : $medicalRules;
         }
+
+        // Build the language string for the prompt
+        $languageForPrompt = $languageName !== $language
+            ? "Пиши строго на языке: {$languageName}. Код языка: {$language}."
+            : $language;
 
         $id          = 'gen_' . date('Ymd') . '_' . bin2hex(random_bytes(4));
         $chunkSize   = (int)($this->config['chunk_size'] ?? 10);
@@ -64,7 +93,6 @@ class GenerationService
         $dateDir  = date('Y-m-d');
         $savePath = STORAGE_PATH . '/generations/' . $dateDir . '/' . $id . '.json';
 
-        // Track seen titles/descriptions to detect duplicates across chunks
         $seenTitles = [];
 
         for ($chunk = 0; $chunk < $totalChunks; $chunk++) {
@@ -74,7 +102,7 @@ class GenerationService
             $userPrompt = $this->promptBuilder->buildPrompt([
                 'topic'           => $topic,
                 'count'           => $endId - $startId + 1,
-                'language'        => $language,
+                'language'        => $languageForPrompt,
                 'length_settings' => $lengthSettings,
                 'operator_rules'  => $operatorRules,
                 'prompt_template' => $promptTemplate,
@@ -99,19 +127,15 @@ class GenerationService
                     continue;
                 }
 
-                // Normalise: accept {items:[...]} or a plain array
-                $chunkItems = $this->extractItems($parsed);
-
-                // Validate each item
-                $validatedItems  = [];
-                $invalidItems    = [];
+                $chunkItems     = $this->extractItems($parsed);
+                $validatedItems = [];
+                $invalidItems   = [];
 
                 foreach ($chunkItems as $item) {
                     if (!is_array($item)) {
                         continue;
                     }
 
-                    // Check for cross-chunk duplicate titles
                     $titleVal = trim((string)($item['title'] ?? ''));
                     if ($titleVal !== '' && in_array($titleVal, $seenTitles, true)) {
                         $item['validation'] = [
@@ -136,18 +160,10 @@ class GenerationService
                     }
                 }
 
-                // Optionally re-generate invalid items (one retry per chunk)
                 if ($autoRegenerate && !empty($invalidItems)) {
                     $regenItems = $this->regenerateInvalidItems(
-                        $invalidItems,
-                        $systemPrompt,
-                        $topic,
-                        $language,
-                        $temperature,
-                        $lengthSettings,
-                        $operatorRules,
-                        $promptTemplate,
-                        $seenTitles
+                        $invalidItems, $systemPrompt, $topic, $languageForPrompt,
+                        $temperature, $lengthSettings, $operatorRules, $promptTemplate, $seenTitles
                     );
                     foreach ($regenItems as $ri) {
                         if (isset($ri['validation']['valid_length']) && $ri['validation']['valid_length']) {
@@ -157,12 +173,10 @@ class GenerationService
                             }
                             $validatedItems[] = $ri;
                         } else {
-                            // Still invalid — include with validation errors for transparency
                             $validatedItems[] = $ri;
                         }
                     }
                 } else {
-                    // Include invalid items with validation errors
                     $validatedItems = array_merge($validatedItems, $invalidItems);
                 }
 
@@ -175,16 +189,52 @@ class GenerationService
 
             // Save partial result after each chunk
             $partial = $this->buildResult(
-                $id, $topic, $count, $language,
-                $allItems, $lengthSettings, $operatorRules, $promptTemplate
+                $id, $topic, $count, $language, $allItems,
+                $lengthSettings, $operatorRules, $promptTemplate,
+                $generationName, $generationSlug, $destinationFolder,
+                $outputFormat, $outputMode, $filenameTemplate, []
             );
             JsonStore::write($savePath, $partial);
         }
 
+        // ── Export files ─────────────────────────────────────────────────────
+        $exportSettings = [
+            'output_format'     => $outputFormat,
+            'output_mode'       => $outputMode,
+            'destination_folder' => $destinationFolder,
+            'filename_template' => $filenameTemplate,
+            'transliterate'     => $transliterate,
+        ];
+
+        $files = [];
+        $exportError = '';
+        try {
+            // Build generation array for export (without final files key to avoid circular)
+            $genForExport = $this->buildResult(
+                $id, $topic, $count, $language, $allItems,
+                $lengthSettings, $operatorRules, $promptTemplate,
+                $generationName, $generationSlug, $destinationFolder,
+                $outputFormat, $outputMode, $filenameTemplate, []
+            );
+            $files = $this->exportService->export($genForExport, $exportSettings);
+
+            // Write metadata.json to the export folder
+            $this->writeExportMetadata($genForExport, $exportSettings, $files);
+        } catch (RuntimeException $e) {
+            $exportError = $e->getMessage();
+            Logger::error('Export failed', ['error' => $exportError]);
+        }
+
         $final = $this->buildResult(
-            $id, $topic, $count, $language,
-            $allItems, $lengthSettings, $operatorRules, $promptTemplate
+            $id, $topic, $count, $language, $allItems,
+            $lengthSettings, $operatorRules, $promptTemplate,
+            $generationName, $generationSlug, $destinationFolder,
+            $outputFormat, $outputMode, $filenameTemplate, $files
         );
+
+        if ($exportError !== '') {
+            $final['export_error'] = $exportError;
+        }
 
         JsonStore::write($savePath, $final);
         Logger::info('Generation completed', ['id' => $id, 'received' => count($allItems)]);
@@ -202,11 +252,17 @@ class GenerationService
         array $items,
         array $lengthSettings,
         string $operatorRules,
-        string $promptTemplate
+        string $promptTemplate,
+        string $generationName,
+        string $generationSlug,
+        string $destinationFolder,
+        string $outputFormat,
+        string $outputMode,
+        string $filenameTemplate,
+        array $files
     ): array {
         $model = method_exists($this->client, 'getModel') ? $this->client->getModel() : 'unknown';
 
-        // Build validation summary
         $invalidCount = 0;
         foreach ($items as $item) {
             if (isset($item['validation']['valid_length']) && !$item['validation']['valid_length']) {
@@ -215,24 +271,57 @@ class GenerationService
         }
 
         return [
-            'id'              => $id,
-            'topic'           => $topic,
-            'requested_count' => $count,
-            'received_count'  => count($items),
-            'language'        => $language,
-            'provider'        => $this->client->getName(),
-            'model'           => $model,
-            'created_at'      => date('c'),  // ISO 8601
-            'length_settings' => $lengthSettings,
-            'operator_rules'  => $operatorRules,
-            'prompt_template' => $promptTemplate,
+            'id'                 => $id,
+            'generation_name'    => $generationName,
+            'generation_slug'    => $generationSlug,
+            'topic'              => $topic,
+            'requested_count'    => $count,
+            'received_count'     => count($items),
+            'language'           => $language,
+            'provider'           => $this->client->getName(),
+            'model'              => $model,
+            'created_at'         => date('c'),
+            'destination_folder' => $destinationFolder,
+            'output_format'      => $outputFormat,
+            'output_mode'        => $outputMode,
+            'filename_template'  => $filenameTemplate,
+            'length_settings'    => $lengthSettings,
+            'operator_rules'     => $operatorRules,
+            'prompt_template'    => $promptTemplate,
             'validation_summary' => [
                 'total'   => count($items),
                 'valid'   => count($items) - $invalidCount,
                 'invalid' => $invalidCount,
             ],
-            'items'           => $items,
+            'files'              => $files,
+            'items'              => $items,
         ];
+    }
+
+    private function writeExportMetadata(array $generation, array $settings, array $files): void
+    {
+        $destFolder = $settings['destination_folder'] ?? '';
+        $pathGuard  = new PathGuard();
+        $absDir     = $pathGuard->resolveExportPath($destFolder);
+
+        $metadata = [
+            'id'                 => $generation['id'],
+            'generation_name'    => $generation['generation_name'] ?? '',
+            'generation_slug'    => $generation['generation_slug'] ?? '',
+            'topic'              => $generation['topic']           ?? '',
+            'destination_folder' => $destFolder,
+            'output_format'      => $settings['output_format']  ?? 'json',
+            'output_mode'        => $settings['output_mode']    ?? 'single_file',
+            'filename_template'  => $settings['filename_template'] ?? '',
+            'language'           => $generation['language']       ?? '',
+            'requested_count'    => $generation['requested_count'] ?? 0,
+            'received_count'     => $generation['received_count']  ?? 0,
+            'created_at'         => $generation['created_at']      ?? date('c'),
+            'files'              => $files,
+        ];
+
+        $metaPath = $absDir . '/metadata.json';
+        JsonStore::write($metaPath, $metadata);
     }
 
     private function extractItems(array $parsed): array
@@ -248,7 +337,6 @@ class GenerationService
 
     private function tryParseJson(string $text): ?array
     {
-        // Strip markdown fences if present
         $cleaned = preg_replace('/^```(?:json)?\s*/i', '', trim($text));
         $cleaned = preg_replace('/\s*```$/', '', (string)$cleaned);
         $cleaned = trim((string)$cleaned);
@@ -274,9 +362,6 @@ class GenerationService
         }
     }
 
-    /**
-     * Re-generate only the invalid items by sending a targeted prompt.
-     */
     private function regenerateInvalidItems(
         array  $invalidItems,
         string $systemPrompt,

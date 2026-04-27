@@ -33,6 +33,7 @@ if (!file_exists($filePath)) {
 $gen = JsonStore::read($filePath);
 
 $genId      = htmlspecialchars($gen['id'] ?? '', ENT_QUOTES, 'UTF-8');
+$genName    = htmlspecialchars($gen['generation_name'] ?? '', ENT_QUOTES, 'UTF-8');
 $topic      = htmlspecialchars($gen['topic'] ?? '', ENT_QUOTES, 'UTF-8');
 $reqCount   = (int)($gen['requested_count'] ?? 0);
 $recCount   = (int)($gen['received_count'] ?? 0);
@@ -44,6 +45,10 @@ $items      = is_array($gen['items'] ?? null) ? $gen['items'] : [];
 $lengthSets = $gen['length_settings'] ?? [];
 $opRules    = $gen['operator_rules'] ?? '';
 $summary    = $gen['validation_summary'] ?? [];
+$exportFiles = is_array($gen['files'] ?? null) ? $gen['files'] : [];
+$outputFormat = htmlspecialchars($gen['output_format'] ?? '—', ENT_QUOTES, 'UTF-8');
+$outputMode   = htmlspecialchars($gen['output_mode'] ?? '—', ENT_QUOTES, 'UTF-8');
+$destFolder   = htmlspecialchars($gen['destination_folder'] ?? '—', ENT_QUOTES, 'UTF-8');
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -85,6 +90,9 @@ pre.rules-pre{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padd
         </div>
         <div style="display:flex;gap:.75rem;flex-wrap:wrap">
             <a href="/admin/download.php?id=<?= $genId ?>" class="btn btn-outline">⬇ Скачать JSON</a>
+            <?php if (!empty($exportFiles)): ?>
+            <a href="/admin/download_zip.php?id=<?= $genId ?>" class="btn btn-outline">📦 Скачать ZIP</a>
+            <?php endif; ?>
             <a href="/admin/history.php" class="btn btn-outline">← История</a>
         </div>
     </div>
@@ -93,6 +101,9 @@ pre.rules-pre{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padd
     <div class="card">
         <h2>Метаданные</h2>
         <div class="meta-grid">
+            <?php if ($genName !== ''): ?>
+            <div class="meta-item"><div class="label">Имя генерации</div><div class="value"><?= $genName ?></div></div>
+            <?php endif; ?>
             <div class="meta-item"><div class="label">Тема</div><div class="value"><?= $topic ?></div></div>
             <div class="meta-item"><div class="label">Запрошено</div><div class="value"><?= $reqCount ?></div></div>
             <div class="meta-item"><div class="label">Получено</div><div class="value"><?= $recCount ?></div></div>
@@ -100,6 +111,9 @@ pre.rules-pre{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padd
             <div class="meta-item"><div class="label">Провайдер</div><div class="value"><?= $provider ?></div></div>
             <div class="meta-item"><div class="label">Модель</div><div class="value" style="font-size:.8rem"><?= $model ?></div></div>
             <div class="meta-item"><div class="label">Создано</div><div class="value"><?= $createdAt ?></div></div>
+            <div class="meta-item"><div class="label">Формат</div><div class="value"><?= $outputFormat ?></div></div>
+            <div class="meta-item"><div class="label">Режим</div><div class="value" style="font-size:.8rem"><?= $outputMode ?></div></div>
+            <div class="meta-item"><div class="label">Папка</div><div class="value" style="font-size:.78rem"><code><?= $destFolder ?></code></div></div>
             <?php if (!empty($summary)): ?>
             <div class="meta-item">
                 <div class="label">Валидация</div>
@@ -117,9 +131,12 @@ pre.rules-pre{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padd
     <!-- Tabs -->
     <div class="card" style="padding-top:1rem">
         <div class="tabs">
-            <button class="tab-btn active" onclick="showTab('items')">📄 Элементы (<?= count($items) ?>)</button>
-            <button class="tab-btn" onclick="showTab('length')">📏 Настройки длины</button>
-            <button class="tab-btn" onclick="showTab('rules')">📝 Правила</button>
+            <button class="tab-btn active" onclick="showTab('items', event)">📄 Элементы (<?= count($items) ?>)</button>
+            <button class="tab-btn" onclick="showTab('length', event)">📏 Настройки длины</button>
+            <button class="tab-btn" onclick="showTab('rules', event)">📝 Правила</button>
+            <?php if (!empty($exportFiles)): ?>
+            <button class="tab-btn" onclick="showTab('files', event)">📁 Файлы (<?= count($exportFiles) ?>)</button>
+            <?php endif; ?>
         </div>
 
         <!-- Items tab -->
@@ -229,15 +246,48 @@ pre.rules-pre{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padd
             <p style="color:#64748b">Правила оператора не указаны.</p>
         <?php endif; ?>
         </div>
+
+        <!-- Files tab -->
+        <div id="tab-files" class="tab-panel">
+        <?php if (empty($exportFiles)): ?>
+            <p style="color:#64748b">Файлы не экспортировались.</p>
+        <?php else: ?>
+            <p style="font-size:.83rem;color:#374151;margin-bottom:.75rem">
+                Формат: <strong><?= $outputFormat ?></strong> &nbsp;|&nbsp;
+                Режим: <strong><?= $outputMode ?></strong> &nbsp;|&nbsp;
+                Папка: <code>storage/exports/<?= $destFolder ?></code>
+            </p>
+            <table class="length-table">
+                <thead>
+                    <tr><th>#</th><th>Файл</th><th>Путь</th><th>Тип</th></tr>
+                </thead>
+                <tbody>
+                <?php foreach ($exportFiles as $idx => $f): ?>
+                <tr>
+                    <td><?= $idx + 1 ?></td>
+                    <td><code style="font-size:.78rem"><?= htmlspecialchars($f['filename'] ?? '', ENT_QUOTES, 'UTF-8') ?></code></td>
+                    <td style="font-size:.78rem;color:#6b7280"><?= htmlspecialchars($f['path'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
+                    <td style="font-size:.78rem"><?= htmlspecialchars($f['type'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <div style="margin-top:.75rem">
+                <a href="/admin/download_zip.php?id=<?= $genId ?>" class="btn btn-sm btn-primary">📦 Скачать все файлы ZIP</a>
+            </div>
+        <?php endif; ?>
+        </div>
     </div>
 </main>
 
 <script>
-function showTab(name) {
+function showTab(name, event) {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('tab-' + name).classList.add('active');
-    event.target.classList.add('active');
+    if (event && event.target) {
+        event.target.classList.add('active');
+    }
 }
 </script>
 </body>

@@ -28,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tolPct      = Validator::int($_POST['tolerance_percent'] ?? 10, 0, 50);
             $autoRegen   = isset($_POST['auto_regenerate_invalid_items']) ? 1 : 0;
             $promptTpl   = trim($_POST['default_prompt_template'] ?? '');
+            $translit    = isset($_POST['transliterate_filenames']) ? 1 : 0;
 
             // Keep existing keys if fields left blank
             if ($orApiKey === '') {
@@ -53,6 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $config['tolerance_percent']              = $tolPct;
             $config['auto_regenerate_invalid_items']  = (bool)$autoRegen;
             $config['default_prompt_template']        = $promptTpl;
+            $config['transliterate_filenames']        = (bool)$translit;
 
             JsonStore::write(STORAGE_PATH . '/config.json', $config);
             Logger::info('Settings updated', ['user' => Auth::getUsername()]);
@@ -186,6 +188,14 @@ $orModel     = htmlspecialchars($config['openrouter_model'] ?? 'openrouter/auto'
                     Автоматически перегенерировать элементы с неверной длиной
                 </label>
                 <p class="hint">Если включено, невалидные по длине элементы будут отправлены на повторную генерацию (один раз).</p>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="transliterate_filenames"
+                           <?= !empty($config['transliterate_filenames']) ? 'checked' : '' ?>>
+                    Транслитерировать имена файлов (кириллица → латиница)
+                </label>
+                <p class="hint">Если включено: «запрос_1.txt» → «zapros_1.txt». Иначе кириллические имена сохраняются как есть.</p>
             </div>
 
             <h2 style="margin-top:1.5rem">Шаблон промта по умолчанию</h2>

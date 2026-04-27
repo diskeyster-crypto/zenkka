@@ -11,8 +11,32 @@ $appName   = htmlspecialchars($config['app_name'] ?? 'Zenkka CMS', ENT_QUOTES, '
 $result    = null;
 $genError  = '';
 
-// Default prompt template (from config or hardcoded default)
 $defaultTemplate = $config['default_prompt_template'] ?? PromptBuilder::DEFAULT_TEMPLATE;
+
+// ── Full language list ────────────────────────────────────────────────────────
+$allLanguages = [
+    'ru' => 'Русский',            'en' => 'English',
+    'de' => 'Deutsch',            'fr' => 'Français',
+    'es' => 'Español',            'it' => 'Italiano',
+    'pt' => 'Português',          'pl' => 'Polski',
+    'uk' => 'Українська',         'be' => 'Беларуская',
+    'kk' => 'Қазақша',            'tr' => 'Türkçe',
+    'ar' => 'العربية',             'he' => 'עברית',
+    'fa' => 'فارسی',              'hi' => 'हिन्दी',
+    'zh' => '中文',               'ja' => '日本語',
+    'ko' => '한국어',              'nl' => 'Nederlands',
+    'sv' => 'Svenska',            'no' => 'Norsk',
+    'da' => 'Dansk',              'fi' => 'Suomi',
+    'cs' => 'Čeština',            'sk' => 'Slovenčina',
+    'ro' => 'Română',             'bg' => 'Български',
+    'sr' => 'Српски',             'hr' => 'Hrvatski',
+    'sl' => 'Slovenščina',        'el' => 'Ελληνικά',
+    'hu' => 'Magyar',             'lt' => 'Lietuvių',
+    'lv' => 'Latviešu',           'et' => 'Eesti',
+    'vi' => 'Tiếng Việt',         'th' => 'ไทย',
+    'id' => 'Bahasa Indonesia',   'ms' => 'Bahasa Melayu',
+    'custom' => '— Другой язык (ввести вручную) —',
+];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $token = $_POST['csrf_token'] ?? '';
@@ -22,8 +46,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $topic       = Validator::str($_POST['topic'] ?? '', 1, 500);
             $count       = Validator::int($_POST['count'] ?? 10, 1, (int)($config['max_variants_per_request'] ?? 200));
-            $language    = Validator::inList($_POST['language'] ?? 'ru', ['ru', 'en', 'de', 'fr', 'es', 'zh']);
             $temperature = Validator::float($_POST['temperature'] ?? 0.7, 0.0, 2.0);
+
+            // Language
+            $langCode = trim($_POST['language'] ?? 'ru');
+            if ($langCode === 'custom') {
+                $langName = Validator::str($_POST['custom_language'] ?? '', 1, 100);
+                $langCode = 'custom';
+            } elseif (array_key_exists($langCode, $allLanguages)) {
+                $langName = $allLanguages[$langCode];
+            } else {
+                throw new InvalidArgumentException('Недопустимый язык.');
+            }
 
             $operatorRules  = trim($_POST['operator_rules'] ?? '');
             $promptTemplate = trim($_POST['prompt_template'] ?? '');
@@ -46,12 +80,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($maxVal > 0 && $minVal > $maxVal) {
                         throw new InvalidArgumentException("Для поля {$field}: min не может быть больше max.");
                     }
-                    $lengthSettings[$field] = [
-                        'mode' => 'range',
-                        'min'  => $minVal,
-                        'max'  => $maxVal,
-                    ];
+                    $lengthSettings[$field] = ['mode' => 'range', 'min' => $minVal, 'max' => $maxVal];
                 }
+            }
+
+            // Export settings
+            $generationName    = trim($_POST['generation_name']    ?? '');
+            $destinationFolder = trim($_POST['destination_folder'] ?? '');
+            $outputFormat      = Validator::inList($_POST['output_format'] ?? 'json', ['json', 'txt', 'html', 'md', 'csv']);
+            $outputMode        = Validator::inList($_POST['output_mode']   ?? 'single_file', ['single_file', 'file_per_item', 'both']);
+            $filenameTemplate  = trim($_POST['filename_template']  ?? '');
+            if ($filenameTemplate === '') {
+                $filenameTemplate = '{generation_slug}_{num}';
             }
 
             $provider = $config['ai_provider'] ?? 'openrouter';
@@ -69,13 +109,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $service = new GenerationService($client, $config);
             $result  = $service->generate([
-                'topic'           => $topic,
-                'count'           => $count,
-                'language'        => $language,
-                'temperature'     => $temperature,
-                'length_settings' => $lengthSettings,
-                'operator_rules'  => $operatorRules,
-                'prompt_template' => $promptTemplate,
+                'topic'              => $topic,
+                'count'              => $count,
+                'language'           => $langCode,
+                'language_name'      => $langName,
+                'temperature'        => $temperature,
+                'length_settings'    => $lengthSettings,
+                'operator_rules'     => $operatorRules,
+                'prompt_template'    => $promptTemplate,
+                'generation_name'    => $generationName,
+                'destination_folder' => $destinationFolder,
+                'output_format'      => $outputFormat,
+                'output_mode'        => $outputMode,
+                'filename_template'  => $filenameTemplate,
             ]);
         } catch (InvalidArgumentException $e) {
             $genError = 'Validation error: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
@@ -90,7 +136,6 @@ $csrfField   = Csrf::field();
 $maxCount    = (int)($config['max_variants_per_request'] ?? 200);
 $currentPage = 'index';
 
-// Example rules text
 $exampleRules = <<<'RULES'
 Напиши информативный текст на обиходном языке.
 
@@ -145,6 +190,13 @@ textarea.rules-ta:focus{outline:none;border-color:#667eea;box-shadow:0 0 0 3px r
 textarea.tpl-ta{width:100%;min-height:300px;font-size:.82rem;font-family:monospace;line-height:1.5;border:1px solid #d1d5db;border-radius:6px;padding:.6rem .8rem;resize:vertical}
 textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.2)}
 .section-title{font-size:1rem;font-weight:700;color:#1e293b;margin:1.5rem 0 .75rem;padding-bottom:.4rem;border-bottom:2px solid #e2e8f0}
+.export-block{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;padding:1rem 1.25rem;margin-top:1rem}
+.export-block h3{font-size:.85rem;font-weight:700;color:#3730a3;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.75rem}
+.hint-vars{font-size:.73rem;color:#6b7280;background:#fff;border:1px dashed #c7d2fe;border-radius:4px;padding:.4rem .7rem;margin-top:.3rem;line-height:1.8}
+.file-list{list-style:none;padding:0;margin:.5rem 0 0}
+.file-list li{font-size:.82rem;padding:.25rem 0;border-bottom:1px solid #f1f5f9}
+.file-list li:last-child{border-bottom:none}
+.file-list code{color:#4f46e5;font-size:.8rem}
 </style>
 </head>
 <body>
@@ -162,18 +214,47 @@ textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgb
 
     <?php if ($result !== null): ?>
     <?php
-        $summary = $result['validation_summary'] ?? [];
-        $valid   = (int)($summary['valid']   ?? $result['received_count'] ?? 0);
-        $invalid = (int)($summary['invalid'] ?? 0);
+        $summary      = $result['validation_summary'] ?? [];
+        $invalid      = (int)($summary['invalid'] ?? 0);
+        $exportFiles  = $result['files'] ?? [];
+        $exportError  = $result['export_error'] ?? '';
+        $genNameDisp  = htmlspecialchars($result['generation_name'] ?? '', ENT_QUOTES, 'UTF-8');
+        $destDisp     = htmlspecialchars($result['destination_folder'] ?? '', ENT_QUOTES, 'UTF-8');
+        $fmtDisp      = htmlspecialchars($result['output_format'] ?? '', ENT_QUOTES, 'UTF-8');
+        $modeDisp     = htmlspecialchars($result['output_mode'] ?? '', ENT_QUOTES, 'UTF-8');
     ?>
     <div class="alert alert-success">
-        ✅ Генерация завершена! Получено <strong><?= (int)$result['received_count'] ?></strong> из <strong><?= (int)$result['requested_count'] ?></strong> элементов.
+        ✅ Генерация завершена!
+        Имя: <strong><?= $genNameDisp ?></strong> |
+        Получено: <strong><?= (int)$result['received_count'] ?></strong> / <strong><?= (int)$result['requested_count'] ?></strong>
         <?php if ($invalid > 0): ?>
         <br><span style="color:#b45309">⚠️ Элементов с ошибками длины: <strong><?= $invalid ?></strong></span>
         <?php endif; ?>
+
+        <?php if ($exportError !== ''): ?>
+        <br><span style="color:#b91c1c">⛔ Ошибка экспорта: <?= htmlspecialchars($exportError, ENT_QUOTES, 'UTF-8') ?></span>
+        <?php elseif (!empty($exportFiles)): ?>
+        <br>
+        <strong>📁 Папка:</strong> <code>storage/exports/<?= $destDisp ?></code> |
+        <strong>Формат:</strong> <?= $fmtDisp ?> |
+        <strong>Режим:</strong> <?= $modeDisp ?> |
+        <strong>Файлов создано:</strong> <?= count($exportFiles) ?>
+        <ul class="file-list">
+            <?php foreach (array_slice($exportFiles, 0, 10) as $f): ?>
+            <li>📄 <code><?= htmlspecialchars($f['path'] ?? $f['filename'] ?? '', ENT_QUOTES, 'UTF-8') ?></code></li>
+            <?php endforeach; ?>
+            <?php if (count($exportFiles) > 10): ?>
+            <li style="color:#6b7280">… и ещё <?= count($exportFiles) - 10 ?> файлов</li>
+            <?php endif; ?>
+        </ul>
+        <?php endif; ?>
+
         <div style="margin-top:.75rem;display:flex;gap:.75rem;flex-wrap:wrap">
             <a href="/admin/view.php?id=<?= htmlspecialchars($result['id'], ENT_QUOTES, 'UTF-8') ?>" class="btn btn-sm btn-outline">👁 Просмотр</a>
             <a href="/admin/download.php?id=<?= htmlspecialchars($result['id'], ENT_QUOTES, 'UTF-8') ?>" class="btn btn-sm btn-outline">⬇ Скачать JSON</a>
+            <?php if (!empty($exportFiles)): ?>
+            <a href="/admin/download_zip.php?id=<?= htmlspecialchars($result['id'], ENT_QUOTES, 'UTF-8') ?>" class="btn btn-sm btn-outline">📦 Скачать ZIP</a>
+            <?php endif; ?>
             <a href="/admin/index.php" class="btn btn-sm btn-primary">+ Новая генерация</a>
         </div>
     </div>
@@ -205,16 +286,23 @@ textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgb
             <div class="form-row">
                 <div class="form-group">
                     <label for="language">Язык</label>
-                    <select id="language" name="language">
+                    <select id="language" name="language" onchange="toggleCustomLang(this.value)">
                         <?php
-                        $langs = ['ru' => 'Русский', 'en' => 'English', 'de' => 'Deutsch',
-                                  'fr' => 'Français', 'es' => 'Español', 'zh' => '中文'];
                         $selLang = $_POST['language'] ?? 'ru';
-                        foreach ($langs as $code => $label):
+                        foreach ($allLanguages as $code => $label):
                         ?>
-                        <option value="<?= $code ?>" <?= $selLang === $code ? 'selected' : '' ?>><?= $label ?></option>
+                        <option value="<?= htmlspecialchars($code, ENT_QUOTES, 'UTF-8') ?>"
+                            <?= $selLang === $code ? 'selected' : '' ?>>
+                            <?= htmlspecialchars("{$code} — {$label}", ENT_QUOTES, 'UTF-8') ?>
+                        </option>
                         <?php endforeach; ?>
                     </select>
+                </div>
+                <div class="form-group" id="custom_lang_group" style="<?= ($selLang !== 'custom') ? 'display:none' : '' ?>">
+                    <label for="custom_language">Свой язык</label>
+                    <input type="text" id="custom_language" name="custom_language"
+                           placeholder="Например: Georgian, Armenian…"
+                           value="<?= htmlspecialchars($_POST['custom_language'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
                 </div>
                 <div class="form-group">
                     <label for="temperature">Температура: <span id="tempVal"><?= htmlspecialchars($_POST['temperature'] ?? '0.7', ENT_QUOTES, 'UTF-8') ?></span></label>
@@ -235,11 +323,7 @@ textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgb
                 'short_description' => ['mode' => 'range', 'exact' => 150, 'min' => 120, 'max' => 180],
                 'description'       => ['mode' => 'range', 'exact' => 250, 'min' => 200, 'max' => 300],
             ];
-            $fieldLabels = [
-                'title'             => 'Title',
-                'short_description' => 'Short Description',
-                'description'       => 'Description',
-            ];
+            $fieldLabels = ['title' => 'Title', 'short_description' => 'Short Description', 'description' => 'Description'];
             foreach (['title', 'short_description', 'description'] as $field):
                 $def  = $lengthDefaults[$field];
                 $mode = $_POST["length_{$field}_mode"] ?? $def['mode'];
@@ -255,7 +339,6 @@ textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgb
                             <option value="exact" <?= $mode === 'exact' ? 'selected' : '' ?>>Точное количество знаков</option>
                         </select>
                     </div>
-
                     <div id="exact_<?= $field ?>" class="exact-group" style="<?= $mode !== 'exact' ? 'display:none' : '' ?>">
                         <div class="form-group">
                             <label>Ровно знаков</label>
@@ -264,7 +347,6 @@ textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgb
                                    min="0" max="10000" style="width:100px">
                         </div>
                     </div>
-
                     <div id="range_<?= $field ?>" class="range-group" style="<?= $mode === 'exact' ? 'display:none' : '' ?>">
                         <div class="form-group">
                             <label>Минимум знаков</label>
@@ -291,7 +373,7 @@ textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgb
                     <button type="button" class="btn btn-sm btn-outline" onclick="document.getElementById('operator_rules').value=''">🗑 Очистить</button>
                 </div>
                 <textarea id="operator_rules" name="operator_rules" class="rules-ta"
-                          placeholder="Здесь можно указать требования к стилю, тону, структуре, SEO и т.д."><?= htmlspecialchars($_POST['operator_rules'] ?? '', ENT_QUOTES, 'UTF-8') ?></textarea>
+                          placeholder="Требования к стилю, тону, структуре, SEO и т.д."><?= htmlspecialchars($_POST['operator_rules'] ?? '', ENT_QUOTES, 'UTF-8') ?></textarea>
             </div>
 
             <!-- ── 4. Prompt template ─────────────────────────────── -->
@@ -299,17 +381,79 @@ textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgb
                 <h3>🔧 Шаблон промта</h3>
                 <div class="template-vars">
                     Доступные переменные:
-                    <code>[topic]</code>
-                    <code>[count]</code>
-                    <code>[language]</code>
-                    <code>[title_length_rules]</code>
-                    <code>[short_description_length_rules]</code>
-                    <code>[description_length_rules]</code>
-                    <code>[operator_rules]</code>
-                    <code>[output_schema]</code>
+                    <code>[topic]</code> <code>[count]</code> <code>[language]</code>
+                    <code>[title_length_rules]</code> <code>[short_description_length_rules]</code>
+                    <code>[description_length_rules]</code> <code>[operator_rules]</code> <code>[output_schema]</code>
                 </div>
                 <textarea id="prompt_template" name="prompt_template" class="tpl-ta"><?= htmlspecialchars($_POST['prompt_template'] ?? $defaultTemplate, ENT_QUOTES, 'UTF-8') ?></textarea>
-                <p class="hint">Оставьте без изменений, чтобы использовать шаблон по умолчанию из настроек.</p>
+                <p class="hint">Оставьте без изменений, чтобы использовать шаблон по умолчанию.</p>
+            </div>
+
+            <!-- ── 5. Файлы и экспорт ──────────────────────────────── -->
+            <div class="section-title">📁 Файлы и экспорт</div>
+
+            <div class="export-block">
+                <h3>🗂 Настройки экспорта</h3>
+
+                <div class="form-row">
+                    <div class="form-group" style="flex:2">
+                        <label for="generation_name">Имя генерации</label>
+                        <input type="text" id="generation_name" name="generation_name" maxlength="200"
+                               placeholder="Например: VPN статьи апрель"
+                               value="<?= htmlspecialchars($_POST['generation_name'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
+                        <p class="hint">Произвольное название. Если пусто — будет автоимя.</p>
+                    </div>
+                    <div class="form-group" style="flex:2">
+                        <label for="destination_folder">Папка назначения</label>
+                        <input type="text" id="destination_folder" name="destination_folder" maxlength="200"
+                               placeholder="Например: exports/vpn или blog/articles"
+                               value="<?= htmlspecialchars($_POST['destination_folder'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
+                        <p class="hint">Относительно <code>storage/exports/</code>. Запрещены ../ и абс. пути.</p>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="output_format">Формат выходного файла</label>
+                        <select id="output_format" name="output_format">
+                            <?php
+                            $formats   = ['json' => 'JSON', 'txt' => 'TXT (текст)', 'html' => 'HTML', 'md' => 'Markdown (MD)', 'csv' => 'CSV'];
+                            $selFormat = $_POST['output_format'] ?? 'json';
+                            foreach ($formats as $fVal => $fLabel):
+                            ?>
+                            <option value="<?= $fVal ?>" <?= $selFormat === $fVal ? 'selected' : '' ?>><?= $fLabel ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="output_mode">Режим сохранения</label>
+                        <select id="output_mode" name="output_mode">
+                            <?php
+                            $modes   = ['single_file' => 'Один общий файл', 'file_per_item' => '1 файл = 1 текст', 'both' => 'Оба варианта'];
+                            $selMode = $_POST['output_mode'] ?? 'single_file';
+                            foreach ($modes as $mVal => $mLabel):
+                            ?>
+                            <option value="<?= $mVal ?>" <?= $selMode === $mVal ? 'selected' : '' ?>><?= $mLabel ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="filename_template">Шаблон имени файла</label>
+                    <input type="text" id="filename_template" name="filename_template" maxlength="200"
+                           placeholder="Например: запрос_{num} или {topic_slug}_{date}_{num}"
+                           value="<?= htmlspecialchars($_POST['filename_template'] ?? '{generation_slug}_{num}', ENT_QUOTES, 'UTF-8') ?>">
+                    <div class="hint-vars">
+                        Переменные:
+                        <code>{generation_name}</code> <code>{generation_slug}</code>
+                        <code>{topic}</code> <code>{topic_slug}</code>
+                        <code>{id}</code> <code>{num}</code>
+                        <code>{date}</code> <code>{time}</code> <code>{datetime}</code>
+                        <code>{format}</code> <code>{lang}</code>
+                        <br>Расширение добавляется автоматически по выбранному формату.
+                    </div>
+                </div>
             </div>
 
             <!-- ── Submit ─────────────────────────────────────────── -->
@@ -324,19 +468,20 @@ textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgb
 </main>
 
 <script>
-// Length mode toggle
 function toggleLengthMode(field, mode) {
     document.getElementById('exact_' + field).style.display = mode === 'exact' ? '' : 'none';
     document.getElementById('range_' + field).style.display = mode === 'range' ? '' : 'none';
 }
 
-// Example rules
+function toggleCustomLang(val) {
+    document.getElementById('custom_lang_group').style.display = val === 'custom' ? '' : 'none';
+}
+
 var exampleRulesText = <?= json_encode($exampleRules, JSON_UNESCAPED_UNICODE) ?>;
 function insertExampleRules() {
     document.getElementById('operator_rules').value = exampleRulesText;
 }
 
-// Spinner on submit
 document.getElementById('genForm').addEventListener('submit', function() {
     document.getElementById('btnText').style.display    = 'none';
     document.getElementById('btnSpinner').style.display = 'inline';

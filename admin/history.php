@@ -76,50 +76,63 @@ foreach ($files as $path) {
     </div>
 
     <div class="card">
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Тема</th>
-                        <th>Запрошено</th>
-                        <th>Получено</th>
-                        <th>Язык</th>
-                        <th>Провайдер</th>
-                        <th>Дата</th>
-                        <th>Действия</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($generations as $gen): ?>
-                    <?php
-                        $id       = htmlspecialchars($gen['id'] ?? '', ENT_QUOTES, 'UTF-8');
-                        $topic    = htmlspecialchars(mb_strimwidth($gen['topic'] ?? '', 0, 60, '…'), ENT_QUOTES, 'UTF-8');
-                        $req      = (int)($gen['requested_count'] ?? 0);
-                        $rec      = (int)($gen['received_count'] ?? 0);
-                        $lang     = htmlspecialchars($gen['language'] ?? '', ENT_QUOTES, 'UTF-8');
-                        $prov     = htmlspecialchars($gen['provider'] ?? '', ENT_QUOTES, 'UTF-8');
-                        $created  = htmlspecialchars($gen['created_at'] ?? '', ENT_QUOTES, 'UTF-8');
-                        $pct      = $req > 0 ? round($rec / $req * 100) : 0;
-                        $badgeCls = $pct >= 90 ? 'badge-green' : ($pct >= 50 ? 'badge-blue' : 'badge-gray');
-                    ?>
-                    <tr>
-                        <td><code style="font-size:.75rem;color:#6b7280"><?= $id ?></code></td>
-                        <td><?= $topic ?></td>
-                        <td><?= $req ?></td>
-                        <td><span class="badge <?= $badgeCls ?>"><?= $rec ?> (<?= $pct ?>%)</span></td>
-                        <td><?= strtoupper($lang) ?></td>
-                        <td><?= $prov ?></td>
-                        <td style="white-space:nowrap;font-size:.8rem"><?= $created ?></td>
-                        <td style="white-space:nowrap">
-                            <a href="/admin/view.php?id=<?= $id ?>" class="btn btn-sm btn-outline">👁</a>
-                            <a href="/admin/download.php?id=<?= $id ?>" class="btn btn-sm btn-outline">⬇</a>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Имя генерации</th>
+                            <th>Тема</th>
+                            <th>Язык</th>
+                            <th>Формат</th>
+                            <th>Режим</th>
+                            <th>Папка</th>
+                            <th>Файлов</th>
+                            <th>Получено</th>
+                            <th>Дата</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($generations as $gen): ?>
+                        <?php
+                            $id       = htmlspecialchars($gen['id'] ?? '', ENT_QUOTES, 'UTF-8');
+                            $genName  = htmlspecialchars(mb_strimwidth($gen['generation_name'] ?? $gen['id'] ?? '', 0, 40, '…'), ENT_QUOTES, 'UTF-8');
+                            $topic    = htmlspecialchars(mb_strimwidth($gen['topic'] ?? '', 0, 50, '…'), ENT_QUOTES, 'UTF-8');
+                            $req      = (int)($gen['requested_count'] ?? 0);
+                            $rec      = (int)($gen['received_count'] ?? 0);
+                            $lang     = htmlspecialchars(strtoupper($gen['language'] ?? ''), ENT_QUOTES, 'UTF-8');
+                            $fmt      = htmlspecialchars($gen['output_format'] ?? '—', ENT_QUOTES, 'UTF-8');
+                            $mode     = htmlspecialchars($gen['output_mode'] ?? '—', ENT_QUOTES, 'UTF-8');
+                            $dest     = htmlspecialchars(mb_strimwidth($gen['destination_folder'] ?? '—', 0, 30, '…'), ENT_QUOTES, 'UTF-8');
+                            $fileCnt  = is_array($gen['files'] ?? null) ? count($gen['files']) : '—';
+                            $created  = htmlspecialchars($gen['created_at'] ?? '', ENT_QUOTES, 'UTF-8');
+                            $pct      = $req > 0 ? round($rec / $req * 100) : 0;
+                            $badgeCls = $pct >= 90 ? 'badge-green' : ($pct >= 50 ? 'badge-blue' : 'badge-gray');
+                        ?>
+                        <tr>
+                            <td><code style="font-size:.72rem;color:#6b7280"><?= $id ?></code></td>
+                            <td><?= $genName ?></td>
+                            <td><?= $topic ?></td>
+                            <td><?= $lang ?></td>
+                            <td><span class="badge badge-blue"><?= $fmt ?></span></td>
+                            <td style="font-size:.8rem;color:#64748b"><?= $mode ?></td>
+                            <td style="font-size:.78rem;color:#64748b"><code><?= $dest ?></code></td>
+                            <td><?= $fileCnt ?></td>
+                            <td><span class="badge <?= $badgeCls ?>"><?= $rec ?> (<?= $pct ?>%)</span></td>
+                            <td style="white-space:nowrap;font-size:.8rem"><?= $created ?></td>
+                            <td style="white-space:nowrap">
+                                <a href="/admin/view.php?id=<?= $id ?>" class="btn btn-sm btn-outline">👁</a>
+                                <a href="/admin/download.php?id=<?= $id ?>" class="btn btn-sm btn-outline">⬇ JSON</a>
+                                <?php if (is_array($gen['files'] ?? null) && count($gen['files']) > 0): ?>
+                                <a href="/admin/download_zip.php?id=<?= $id ?>" class="btn btn-sm btn-outline">📦 ZIP</a>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
     </div>
     <?php endif; ?>
 </main>
