@@ -7,24 +7,52 @@ Auth::requireAuth();
 
 $config    = JsonStore::readConfig();
 $appName   = htmlspecialchars($config['app_name'] ?? 'Zenkka CMS', ENT_QUOTES, 'UTF-8');
-$username  = htmlspecialchars(Auth::getUsername(), ENT_QUOTES, 'UTF-8');
 
 $result    = null;
 $genError  = '';
-$submitted = false;
+
+// Default prompt template (from config or hardcoded default)
+$defaultTemplate = $config['default_prompt_template'] ?? PromptBuilder::DEFAULT_TEMPLATE;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $token = $_POST['csrf_token'] ?? '';
     if (!Csrf::validate($token)) {
         $genError = 'Invalid CSRF token.';
     } else {
-        $submitted = true;
         try {
             $topic       = Validator::str($_POST['topic'] ?? '', 1, 500);
             $count       = Validator::int($_POST['count'] ?? 10, 1, (int)($config['max_variants_per_request'] ?? 200));
             $language    = Validator::inList($_POST['language'] ?? 'ru', ['ru', 'en', 'de', 'fr', 'es', 'zh']);
-            $format      = Validator::inList($_POST['format'] ?? 'title', ['title', 'short', 'extended']);
             $temperature = Validator::float($_POST['temperature'] ?? 0.7, 0.0, 2.0);
+
+            $operatorRules  = trim($_POST['operator_rules'] ?? '');
+            $promptTemplate = trim($_POST['prompt_template'] ?? '');
+            if ($promptTemplate === '') {
+                $promptTemplate = $defaultTemplate;
+            }
+
+            // Length settings
+            $lengthSettings = [];
+            foreach (['title', 'short_description', 'description'] as $field) {
+                $mode = Validator::inList($_POST["length_{$field}_mode"] ?? 'range', ['exact', 'range']);
+                if ($mode === 'exact') {
+                    $lengthSettings[$field] = [
+                        'mode'  => 'exact',
+                        'exact' => Validator::int($_POST["length_{$field}_exact"] ?? 0, 0, 10000),
+                    ];
+                } else {
+                    $minVal = Validator::int($_POST["length_{$field}_min"] ?? 0, 0, 10000);
+                    $maxVal = Validator::int($_POST["length_{$field}_max"] ?? 0, 0, 10000);
+                    if ($maxVal > 0 && $minVal > $maxVal) {
+                        throw new InvalidArgumentException("Для поля {$field}: min не может быть больше max.");
+                    }
+                    $lengthSettings[$field] = [
+                        'mode' => 'range',
+                        'min'  => $minVal,
+                        'max'  => $maxVal,
+                    ];
+                }
+            }
 
             $provider = $config['ai_provider'] ?? 'openrouter';
             if ($provider === 'gemini') {
@@ -41,11 +69,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $service = new GenerationService($client, $config);
             $result  = $service->generate([
-                'topic'       => $topic,
-                'count'       => $count,
-                'language'    => $language,
-                'format'      => $format,
-                'temperature' => $temperature,
+                'topic'           => $topic,
+                'count'           => $count,
+                'language'        => $language,
+                'temperature'     => $temperature,
+                'length_settings' => $lengthSettings,
+                'operator_rules'  => $operatorRules,
+                'prompt_template' => $promptTemplate,
             ]);
         } catch (InvalidArgumentException $e) {
             $genError = 'Validation error: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
@@ -56,9 +86,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$csrfField  = Csrf::field();
-$maxCount   = (int)($config['max_variants_per_request'] ?? 1000);
+$csrfField   = Csrf::field();
+$maxCount    = (int)($config['max_variants_per_request'] ?? 200);
 $currentPage = 'index';
+
+// Example rules text
+$exampleRules = <<<'RULES'
+Напиши информативный текст на обиходном языке.
+
+Задача:
+Текст должен выглядеть естественно, как написанный человеком: живой, немного неровный, без ощущения рекламы или шаблона.
+
+Содержание:
+Кратко и понятно раскрыть:
+- что это такое
+- когда и зачем используется
+- как применяется в общих чертах
+- возможные ограничения, нюансы или побочные эффекты
+
+Нативные упоминания:
+Лёгко и ненавязчиво упомянуть, что товар может быть доступен в магазинах или онлайн.
+
+Стиль:
+- разговорный, но информативный
+- без рекламных клише
+- без агрессивных призывов к покупке
+- без перегруженности терминами
+
+Естественность:
+- варьировать длину предложений
+- не начинать все тексты одинаково
+- избегать повторяющихся структур
+- каждый текст должен отличаться по тону и структуре
+- можно начинать с вопроса, ситуации, наблюдения или факта
+RULES;
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -67,6 +128,24 @@ $currentPage = 'index';
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Генерация — <?= $appName ?></title>
 <?php include __DIR__ . '/partials/admin_styles.php'; ?>
+<style>
+.length-block{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:1rem 1.25rem;margin-bottom:1rem}
+.length-block h3{font-size:.85rem;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.75rem}
+.length-row{display:flex;gap:.75rem;align-items:flex-start;flex-wrap:wrap}
+.length-row .form-group{margin-bottom:0;flex:1;min-width:100px}
+.exact-group,.range-group{display:flex;gap:.75rem;flex-wrap:wrap}
+.mode-toggle select{font-size:.85rem;padding:.4rem .6rem}
+.rules-block{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:1rem 1.25rem;margin-top:1rem}
+.rules-block h3{font-size:.85rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.75rem}
+textarea.rules-ta{width:100%;min-height:200px;font-size:.85rem;font-family:monospace;line-height:1.5;border:1px solid #d1d5db;border-radius:6px;padding:.6rem .8rem;resize:vertical}
+textarea.rules-ta:focus{outline:none;border-color:#667eea;box-shadow:0 0 0 3px rgba(102,126,234,.2)}
+.template-block{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:1rem 1.25rem;margin-top:1rem}
+.template-block h3{font-size:.85rem;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.75rem}
+.template-vars{font-size:.75rem;color:#6b7280;background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:.5rem .75rem;margin-bottom:.75rem;line-height:1.8}
+textarea.tpl-ta{width:100%;min-height:300px;font-size:.82rem;font-family:monospace;line-height:1.5;border:1px solid #d1d5db;border-radius:6px;padding:.6rem .8rem;resize:vertical}
+textarea.tpl-ta:focus{outline:none;border-color:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.2)}
+.section-title{font-size:1rem;font-weight:700;color:#1e293b;margin:1.5rem 0 .75rem;padding-bottom:.4rem;border-bottom:2px solid #e2e8f0}
+</style>
 </head>
 <body>
 <?php include __DIR__ . '/partials/sidebar.php'; ?>
@@ -82,8 +161,16 @@ $currentPage = 'index';
     <?php endif; ?>
 
     <?php if ($result !== null): ?>
+    <?php
+        $summary = $result['validation_summary'] ?? [];
+        $valid   = (int)($summary['valid']   ?? $result['received_count'] ?? 0);
+        $invalid = (int)($summary['invalid'] ?? 0);
+    ?>
     <div class="alert alert-success">
         ✅ Генерация завершена! Получено <strong><?= (int)$result['received_count'] ?></strong> из <strong><?= (int)$result['requested_count'] ?></strong> элементов.
+        <?php if ($invalid > 0): ?>
+        <br><span style="color:#b45309">⚠️ Элементов с ошибками длины: <strong><?= $invalid ?></strong></span>
+        <?php endif; ?>
         <div style="margin-top:.75rem;display:flex;gap:.75rem;flex-wrap:wrap">
             <a href="/admin/view.php?id=<?= htmlspecialchars($result['id'], ENT_QUOTES, 'UTF-8') ?>" class="btn btn-sm btn-outline">👁 Просмотр</a>
             <a href="/admin/download.php?id=<?= htmlspecialchars($result['id'], ENT_QUOTES, 'UTF-8') ?>" class="btn btn-sm btn-outline">⬇ Скачать JSON</a>
@@ -96,59 +183,160 @@ $currentPage = 'index';
         <form method="POST" action="/admin/index.php" id="genForm">
             <?= $csrfField ?>
 
+            <!-- ── 1. Тема и количество ────────────────────────────── -->
+            <div class="section-title">📌 Тема и количество</div>
+
             <div class="form-row">
-                <div class="form-group" style="flex:1">
-                    <label for="topic">Тема</label>
-                    <input type="text" id="topic" name="topic" placeholder="Например: рецепты пиццы" required maxlength="500">
-                    <p class="hint">Опишите тему для генерации.</p>
+                <div class="form-group" style="flex:2">
+                    <label for="topic">Тема генерации</label>
+                    <input type="text" id="topic" name="topic"
+                           placeholder="Например: рецепты пиццы" required maxlength="500"
+                           value="<?= htmlspecialchars($_POST['topic'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
+                </div>
+                <div class="form-group">
+                    <label for="count">Количество вариантов</label>
+                    <input type="number" id="count" name="count"
+                           value="<?= (int)($_POST['count'] ?? 10) ?>"
+                           min="1" max="<?= $maxCount ?>" required>
+                    <p class="hint">Макс: <?= $maxCount ?></p>
                 </div>
             </div>
 
             <div class="form-row">
-                <div class="form-group">
-                    <label for="count">Количество элементов</label>
-                    <input type="number" id="count" name="count" value="10" min="1" max="<?= $maxCount ?>" required>
-                    <p class="hint">Макс: <?= $maxCount ?></p>
-                </div>
                 <div class="form-group">
                     <label for="language">Язык</label>
                     <select id="language" name="language">
-                        <option value="ru">Русский</option>
-                        <option value="en">English</option>
-                        <option value="de">Deutsch</option>
-                        <option value="fr">Français</option>
-                        <option value="es">Español</option>
-                        <option value="zh">中文</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="format">Формат</label>
-                    <select id="format" name="format">
-                        <option value="title">Только заголовок</option>
-                        <option value="short">Заголовок + краткое описание</option>
-                        <option value="extended">Заголовок + описание + текст</option>
+                        <?php
+                        $langs = ['ru' => 'Русский', 'en' => 'English', 'de' => 'Deutsch',
+                                  'fr' => 'Français', 'es' => 'Español', 'zh' => '中文'];
+                        $selLang = $_POST['language'] ?? 'ru';
+                        foreach ($langs as $code => $label):
+                        ?>
+                        <option value="<?= $code ?>" <?= $selLang === $code ? 'selected' : '' ?>><?= $label ?></option>
+                        <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label for="temperature">Температура: <span id="tempVal">0.7</span></label>
-                    <input type="range" id="temperature" name="temperature" min="0" max="2" step="0.1" value="0.7"
+                    <label for="temperature">Температура: <span id="tempVal"><?= htmlspecialchars($_POST['temperature'] ?? '0.7', ENT_QUOTES, 'UTF-8') ?></span></label>
+                    <input type="range" id="temperature" name="temperature"
+                           min="0" max="2" step="0.1"
+                           value="<?= htmlspecialchars($_POST['temperature'] ?? '0.7', ENT_QUOTES, 'UTF-8') ?>"
                            oninput="document.getElementById('tempVal').textContent=this.value">
                     <p class="hint">0 = точный, 2 = творческий</p>
                 </div>
             </div>
 
-            <button type="submit" class="btn btn-primary" id="submitBtn">
-                <span id="btnText">🚀 Сгенерировать</span>
-                <span id="btnSpinner" style="display:none">⏳ Генерация...</span>
-            </button>
+            <!-- ── 2. Настройки длины ─────────────────────────────── -->
+            <div class="section-title">📏 Настройки длины текста</div>
+
+            <?php
+            $lengthDefaults = [
+                'title'             => ['mode' => 'range', 'exact' => 55,  'min' => 40,  'max' => 70],
+                'short_description' => ['mode' => 'range', 'exact' => 150, 'min' => 120, 'max' => 180],
+                'description'       => ['mode' => 'range', 'exact' => 250, 'min' => 200, 'max' => 300],
+            ];
+            $fieldLabels = [
+                'title'             => 'Title',
+                'short_description' => 'Short Description',
+                'description'       => 'Description',
+            ];
+            foreach (['title', 'short_description', 'description'] as $field):
+                $def  = $lengthDefaults[$field];
+                $mode = $_POST["length_{$field}_mode"] ?? $def['mode'];
+            ?>
+            <div class="length-block">
+                <h3><?= $fieldLabels[$field] ?></h3>
+                <div class="length-row">
+                    <div class="form-group mode-toggle">
+                        <label>Режим</label>
+                        <select name="length_<?= $field ?>_mode" id="mode_<?= $field ?>"
+                                onchange="toggleLengthMode('<?= $field ?>', this.value)">
+                            <option value="range" <?= $mode === 'range' ? 'selected' : '' ?>>Диапазон от/до</option>
+                            <option value="exact" <?= $mode === 'exact' ? 'selected' : '' ?>>Точное количество знаков</option>
+                        </select>
+                    </div>
+
+                    <div id="exact_<?= $field ?>" class="exact-group" style="<?= $mode !== 'exact' ? 'display:none' : '' ?>">
+                        <div class="form-group">
+                            <label>Ровно знаков</label>
+                            <input type="number" name="length_<?= $field ?>_exact"
+                                   value="<?= (int)($_POST["length_{$field}_exact"] ?? $def['exact']) ?>"
+                                   min="0" max="10000" style="width:100px">
+                        </div>
+                    </div>
+
+                    <div id="range_<?= $field ?>" class="range-group" style="<?= $mode === 'exact' ? 'display:none' : '' ?>">
+                        <div class="form-group">
+                            <label>Минимум знаков</label>
+                            <input type="number" name="length_<?= $field ?>_min"
+                                   value="<?= (int)($_POST["length_{$field}_min"] ?? $def['min']) ?>"
+                                   min="0" max="10000" style="width:100px">
+                        </div>
+                        <div class="form-group">
+                            <label>Максимум знаков</label>
+                            <input type="number" name="length_<?= $field ?>_max"
+                                   value="<?= (int)($_POST["length_{$field}_max"] ?? $def['max']) ?>"
+                                   min="0" max="10000" style="width:100px">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <?php endforeach; ?>
+
+            <!-- ── 3. Rules ───────────────────────────────────────── -->
+            <div class="rules-block">
+                <h3>📝 Правила генерации (operator rules)</h3>
+                <div style="display:flex;gap:.5rem;margin-bottom:.5rem">
+                    <button type="button" class="btn btn-sm btn-outline" onclick="insertExampleRules()">📋 Вставить пример</button>
+                    <button type="button" class="btn btn-sm btn-outline" onclick="document.getElementById('operator_rules').value=''">🗑 Очистить</button>
+                </div>
+                <textarea id="operator_rules" name="operator_rules" class="rules-ta"
+                          placeholder="Здесь можно указать требования к стилю, тону, структуре, SEO и т.д."><?= htmlspecialchars($_POST['operator_rules'] ?? '', ENT_QUOTES, 'UTF-8') ?></textarea>
+            </div>
+
+            <!-- ── 4. Prompt template ─────────────────────────────── -->
+            <div class="template-block">
+                <h3>🔧 Шаблон промта</h3>
+                <div class="template-vars">
+                    Доступные переменные:
+                    <code>[topic]</code>
+                    <code>[count]</code>
+                    <code>[language]</code>
+                    <code>[title_length_rules]</code>
+                    <code>[short_description_length_rules]</code>
+                    <code>[description_length_rules]</code>
+                    <code>[operator_rules]</code>
+                    <code>[output_schema]</code>
+                </div>
+                <textarea id="prompt_template" name="prompt_template" class="tpl-ta"><?= htmlspecialchars($_POST['prompt_template'] ?? $defaultTemplate, ENT_QUOTES, 'UTF-8') ?></textarea>
+                <p class="hint">Оставьте без изменений, чтобы использовать шаблон по умолчанию из настроек.</p>
+            </div>
+
+            <!-- ── Submit ─────────────────────────────────────────── -->
+            <div style="margin-top:1.5rem">
+                <button type="submit" class="btn btn-primary" id="submitBtn">
+                    <span id="btnText">🚀 Сгенерировать</span>
+                    <span id="btnSpinner" style="display:none">⏳ Генерация...</span>
+                </button>
+            </div>
         </form>
     </div>
 </main>
 
 <script>
+// Length mode toggle
+function toggleLengthMode(field, mode) {
+    document.getElementById('exact_' + field).style.display = mode === 'exact' ? '' : 'none';
+    document.getElementById('range_' + field).style.display = mode === 'range' ? '' : 'none';
+}
+
+// Example rules
+var exampleRulesText = <?= json_encode($exampleRules, JSON_UNESCAPED_UNICODE) ?>;
+function insertExampleRules() {
+    document.getElementById('operator_rules').value = exampleRulesText;
+}
+
+// Spinner on submit
 document.getElementById('genForm').addEventListener('submit', function() {
     document.getElementById('btnText').style.display    = 'none';
     document.getElementById('btnSpinner').style.display = 'inline';

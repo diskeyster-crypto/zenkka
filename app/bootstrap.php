@@ -23,6 +23,8 @@ require_once APP_PATH . '/Csrf.php';
 require_once APP_PATH . '/JsonStore.php';
 require_once APP_PATH . '/Validator.php';
 require_once APP_PATH . '/Logger.php';
+require_once APP_PATH . '/PromptBuilder.php';
+require_once APP_PATH . '/GenerationValidator.php';
 require_once APP_PATH . '/GenerationService.php';
 require_once APP_PATH . '/Ai/AiClientInterface.php';
 require_once APP_PATH . '/Ai/OpenRouterClient.php';

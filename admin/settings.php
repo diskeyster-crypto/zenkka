@@ -24,6 +24,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $geminiKey   = trim($_POST['gemini_api_key'] ?? '');
             $maxVariants = Validator::int($_POST['max_variants_per_request'] ?? 200, 1, 10000);
             $chunkSize   = Validator::int($_POST['chunk_size'] ?? 10, 1, 100);
+            $allowTol    = isset($_POST['allow_length_tolerance']) ? 1 : 0;
+            $tolPct      = Validator::int($_POST['tolerance_percent'] ?? 10, 0, 50);
+            $autoRegen   = isset($_POST['auto_regenerate_invalid_items']) ? 1 : 0;
+            $promptTpl   = trim($_POST['default_prompt_template'] ?? '');
 
             // Keep existing keys if fields left blank
             if ($orApiKey === '') {
@@ -35,13 +39,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($orModel === '') {
                 $orModel = 'openrouter/auto';
             }
+            if ($promptTpl === '') {
+                $promptTpl = PromptBuilder::DEFAULT_TEMPLATE;
+            }
 
-            $config['ai_provider']              = $aiProvider;
-            $config['openrouter_api_key']        = $orApiKey;
-            $config['openrouter_model']          = $orModel;
-            $config['gemini_api_key']            = $geminiKey;
-            $config['max_variants_per_request']  = $maxVariants;
-            $config['chunk_size']                = $chunkSize;
+            $config['ai_provider']                   = $aiProvider;
+            $config['openrouter_api_key']             = $orApiKey;
+            $config['openrouter_model']               = $orModel;
+            $config['gemini_api_key']                 = $geminiKey;
+            $config['max_variants_per_request']       = $maxVariants;
+            $config['chunk_size']                     = $chunkSize;
+            $config['allow_length_tolerance']         = (bool)$allowTol;
+            $config['tolerance_percent']              = $tolPct;
+            $config['auto_regenerate_invalid_items']  = (bool)$autoRegen;
+            $config['default_prompt_template']        = $promptTpl;
 
             JsonStore::write(STORAGE_PATH . '/config.json', $config);
             Logger::info('Settings updated', ['user' => Auth::getUsername()]);
@@ -149,6 +160,49 @@ $orModel     = htmlspecialchars($config['openrouter_model'] ?? 'openrouter/auto'
                            value="<?= (int)($config['chunk_size'] ?? 10) ?>" min="1" max="100">
                     <p class="hint">Количество элементов за один запрос к AI.</p>
                 </div>
+            </div>
+
+            <h2 style="margin-top:1.5rem">Валидация длины</h2>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="allow_length_tolerance"
+                               <?= !empty($config['allow_length_tolerance']) ? 'checked' : '' ?>>
+                        Разрешить допуск длины (tolerance)
+                    </label>
+                    <p class="hint">Если включено, допускается отклонение в пределах ±N% от заданного диапазона.</p>
+                </div>
+                <div class="form-group">
+                    <label for="tolerance_percent">Допуск, %</label>
+                    <input type="number" id="tolerance_percent" name="tolerance_percent"
+                           value="<?= (int)($config['tolerance_percent'] ?? 10) ?>" min="0" max="50">
+                    <p class="hint">0–50%. По умолчанию 10%.</p>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="auto_regenerate_invalid_items"
+                           <?= !empty($config['auto_regenerate_invalid_items']) ? 'checked' : '' ?>>
+                    Автоматически перегенерировать элементы с неверной длиной
+                </label>
+                <p class="hint">Если включено, невалидные по длине элементы будут отправлены на повторную генерацию (один раз).</p>
+            </div>
+
+            <h2 style="margin-top:1.5rem">Шаблон промта по умолчанию</h2>
+            <div class="form-group">
+                <div style="font-size:.75rem;color:#6b7280;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;padding:.5rem .75rem;margin-bottom:.5rem;line-height:1.8">
+                    Переменные:
+                    <code>[topic]</code> <code>[count]</code> <code>[language]</code>
+                    <code>[title_length_rules]</code> <code>[short_description_length_rules]</code>
+                    <code>[description_length_rules]</code> <code>[operator_rules]</code> <code>[output_schema]</code>
+                </div>
+                <textarea name="default_prompt_template"
+                          style="width:100%;min-height:280px;font-size:.82rem;font-family:monospace;line-height:1.5;border:1px solid #d1d5db;border-radius:6px;padding:.6rem .8rem;resize:vertical"><?= htmlspecialchars(
+                    $config['default_prompt_template'] ?? PromptBuilder::DEFAULT_TEMPLATE,
+                    ENT_QUOTES,
+                    'UTF-8'
+                ) ?></textarea>
+                <p class="hint">Оставьте пустым, чтобы восстановить шаблон по умолчанию.</p>
             </div>
 
             <button type="submit" class="btn btn-primary">💾 Сохранить настройки</button>
