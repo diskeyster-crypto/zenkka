@@ -6,10 +6,12 @@ define('STORAGE_PATH', BASE_PATH . '/storage');
 define('APP_PATH', BASE_PATH . '/app');
 
 if (session_status() === PHP_SESSION_NONE) {
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+               || (isset($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443);
     session_set_cookie_params([
         'lifetime' => 0,
         'path'     => '/',
-        'secure'   => false,
+        'secure'   => $isHttps,
         'httponly' => true,
         'samesite' => 'Strict',
     ]);
